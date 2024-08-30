@@ -11,7 +11,7 @@ set SUMMARY_TIME_OFFSET=0
 rem ############################## Detector info #########################
 set DETECTOR_DIR=C:\Users\xavier.mouy\Documents\Projects\2021_Minke_detector\apps\Minke_detector_windows_anaconda
 set MODEL=C:\Users\xavier.mouy\Documents\Projects\2021_Minke_detector\apps\Minke_detector_windows_anaconda\models\spectro-5s_fft-0.256_step-0.03_fmin-0_fmax-800_no-norm\ketos_model.kt
-set MIN_CONFIDENCE=0.6
+set MIN_CONFIDENCE=0.9
 set BATCH_SIZE=512
 
 rem ######################### No need to edit part below #################
