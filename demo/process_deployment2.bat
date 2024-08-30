@@ -11,7 +11,7 @@ set SUMMARY_TIME_OFFSET=0
 rem ############################## Detector info #########################
 set DETECTOR_DIR=C:\Users\xavie\OneDrive\Desktop\Minke_detector
 set MODEL=C:\Users\xavie\OneDrive\Desktop\Minke_detector\models\with_denoising\ketos_model.kt
-set MIN_CONFIDENCE=0.6
+set MIN_CONFIDENCE=0.9
 set BATCH_SIZE=512
 
 rem ######################### No need to edit part below #################
