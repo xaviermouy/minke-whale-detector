@@ -103,7 +103,7 @@ def set_args_parser():
     parser.add_argument(
         "--step_sec",
         type=float,
-        default=None,
+        default=1,
         help="Step size (in seconds) used for the sliding window",
     )
 
@@ -131,12 +131,17 @@ def set_args_parser():
         default=None,
         help="Maximum duration allowed for detections(in seconds)",
     )
-
     parser.add_argument(
         "--class_id",
         type=int,
         default=1,
         help="Class ID to use (default 1)",
+    )
+    parser.add_argument(
+        "--chunk_size_sec",
+        type=int,
+        default=3600,
+        help="Maximum chunk of signal to load at a time - in sec (default 3600 -> 1h)",
     )
     parser.add_argument(
         "--tmp_dir",
@@ -156,7 +161,6 @@ def set_args_parser():
         default=None,
         help="Identification of the deployment being processed (for book keeping).",
     )
-
     parser.add_argument(
         '--recursive',
         default=False,
@@ -164,7 +168,6 @@ def set_args_parser():
         help="Process files from all folders and sub-folders",
     ),
     return parser
-
 
 def set_logger(outdir):
     """
@@ -213,8 +216,6 @@ def decimate(
     audio_data = Sound(infile)
     # load audio data
     audio_data.read(channel=channel - 1, detrend=True)
-
-
     # decimate
     if sampling_rate_hz <= audio_data.file_sampling_frequency:
         audio_data.decimate(sampling_rate_hz)
@@ -237,12 +238,13 @@ def decimate(
         audio_data.waveform[audio_data.waveform < -(20 * np.std(audio_data.waveform))] = 0
         # normalize
         audio_data.normalize()
+        file_dur_sec = audio_data.file_duration_sec
         # write new file
         outfilename = os.path.basename(os.path.splitext(infile)[0]) + ".wav"
         audio_data.write(os.path.join(out_dir, outfilename))
     else:
         raise Exception("The sampling frequency of the recording is too low.")
-    return outfilename
+    return outfilename, file_dur_sec
 
 
 def classify_spectro_segments(spectro, model, spec_config, args):
@@ -451,39 +453,64 @@ def run():
                 file_tab = pd.DataFrame({'File_processed': [os.path.split(file)[1]]})
 
                 # Decimate
-                temp_file_name = decimate(file, tmp_dir_audio, spec_config["rate"], channel=args.channel)
+                temp_file_name, temp_file_dur_sec = decimate(file, tmp_dir_audio, spec_config["rate"], channel=args.channel)
 
-                # calc spectrogram
-                spectro = MagSpectrogram.from_wav(os.path.join(tmp_dir_audio, temp_file_name),
-                                                  window=spec_config['window'],
-                                                  step=spec_config['step'],
-                                                  freq_min=spec_config['freq_min'],
-                                                  freq_max=spec_config['freq_max'],
-                                                  window_func=spec_config['window_func'],
-                                                  )
-                # run classification model
-                scores, seg_times_sec = classify_spectro_segments(spectro, model, spec_config, args)
-                #plt.plot(seg_times_sec, scores[:, 1])
+                # break down audio file into chunks if memory is an issue
+                chunk_size_sec=args.chunk_size_sec
+                if temp_file_dur_sec > chunk_size_sec:
+                    chunks = list(range(0,int(temp_file_dur_sec),chunk_size_sec))
+                    chunks[-1]= int(temp_file_dur_sec)
+                else:
+                    chunks=[0,int(temp_file_dur_sec)]
 
+                ## loop through chunks
+                #scores_all_chunks=[]
+                #seg_times_sec_all_chunks =[]
+                chunk_start_time_sec = 0
+                for chunk_idx in range(0,len(chunks)-1):
+                    #chunk_start_time_sec = float(chunks[chunk_idx])
+                    #chunk_dur_sec = float(chunks[chunk_idx+1] - chunks[chunk_idx])
+                    chunk_dur_sec = float(chunks[chunk_idx + 1] - chunk_start_time_sec)
+                    # calc spectrogram
+                    spectro = MagSpectrogram.from_wav(os.path.join(tmp_dir_audio, temp_file_name),
+                                                      window=spec_config['window'],
+                                                      step=spec_config['step'],
+                                                      freq_min=spec_config['freq_min'],
+                                                      freq_max=spec_config['freq_max'],
+                                                      window_func=spec_config['window_func'],
+                                                      offset=chunk_start_time_sec,
+                                                      duration=chunk_dur_sec,
+                                                      )
+                    # run classification model
+                    scores, seg_times_sec = classify_spectro_segments(spectro, model, spec_config, args)
+                    # add time offset for that chunk
+                    seg_times_sec = seg_times_sec + chunk_start_time_sec
+                    # stack results
+                    if chunk_idx == 0:
+                        scores_all_chunks = scores
+                        seg_times_sec_all_chunks = seg_times_sec
+                    else:
+                        scores_all_chunks = np.append(scores_all_chunks,scores,axis=0)
+                        seg_times_sec_all_chunks = np.append(seg_times_sec_all_chunks,seg_times_sec)
+                    # update to start time for next chunk
+                    chunk_start_time_sec = seg_times_sec[-1] + args.step_sec
+                    #plt.plot(seg_times_sec, scores[:, 1])
+                # reassign to original variable names
+                scores = scores_all_chunks
+                seg_times_sec = seg_times_sec_all_chunks
                 # Smooth detection function by applying running mean
                 scores = compute_avg_score(scores[:, args.class_id], win_len=int(smooth_bins))
-
-
                 # define detections (start and stop times, metadata, etc)
                 detec = define_detections(scores, seg_times_sec, spec_config, audio_repr, file, args)
-
                 # add software version
                 detec.insert_values(software_version=software_version)
-
                 # filter detection based on min amd max duration (if defined)
                 if args.min_dur_sec:
                     detec.filter('duration >= ' + str(args.min_dur_sec), inplace=True)
                 if args.max_dur_sec:
                     detec.filter('duration <= ' + str(args.max_dur_sec), inplace=True)
-
                 print(len(detec), " detections")
                 logger.info(" %u detections" % (len(detec)))
-
                 # save results
                 if len(detec) > 0:
                     # save output to Raven
@@ -492,7 +519,6 @@ def run():
                     detec.to_netcdf(os.path.join(args.output_folder, os.path.split(file)[1]))
                     # Save to SQLite
                     # database = os.path.join(args.output_folder, "detections.sqlite")
-
                     conn = sqlite3.connect(database)
                     detec.data.to_sql(name="detections", con=conn, if_exists="append", index=False)
                     conn.close()

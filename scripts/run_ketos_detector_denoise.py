@@ -226,7 +226,8 @@ def decimate(
         audio_data.write(os.path.join(out_dir, outfilename))
     else:
         raise Exception("The sampling frequency of the recording is too low.")
-    return outfilename
+    file_dur_sec = audio_data.file_duration_sec
+    return outfilename, file_dur_sec
 
 def calc_spectrogram(infile, spec_config):
     # load audio data
@@ -450,7 +451,6 @@ def run():
     #database = os.path.join(tmp_dir_db, "detections.sqlite")
     database = os.path.join(args.output_folder, "detections.sqlite")
 
-
     # Set error logs
     logger = set_logger(args.output_folder)
 
@@ -488,19 +488,12 @@ def run():
                 file_tab = pd.DataFrame({'File_processed': [os.path.split(file)[1]]})
 
                 # Decimate
-                temp_file_name = decimate(file, tmp_dir_audio, spec_config["rate"], channel=args.channel)
+                temp_file_name, temp_file_dur_sec = decimate(file, tmp_dir_audio, spec_config["rate"], channel=args.channel)
 
                 # calc spectrogram
                 spectro = calc_spectrogram(os.path.join(tmp_dir_audio, temp_file_name), spec_config)
-                # spectro = MagSpectrogram.from_wav(os.path.join(tmp_dir_audio, temp_file_name),
-                #                                   window=spec_config['window'],
-                #                                   step=spec_config['step'],
-                #                                   freq_min=spec_config['freq_min'],
-                #                                   freq_max=spec_config['freq_max'],
-                #                                   window_func="hamming",
-                #                                   )
+
                 # run classification model
-                #scores, seg_times_sec = classify_spectro_segments_ketos(spectro, model, spec_config, args)
                 scores, seg_times_sec = classify_spectro_segments(spectro, model, spec_config, args)
                 #plt.plot(seg_times_sec, scores[:,1])
 
